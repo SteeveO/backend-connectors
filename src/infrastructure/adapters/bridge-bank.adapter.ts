@@ -119,22 +119,22 @@ function toDomainError(error: unknown): Error {
   if (isAxiosError(error)) {
     if (!error.response) {
       return new BankUnavailableException(
-        `Bridge mock server is unreachable: ${error.message}`,
+        `Bank service is unreachable: ${error.message}`,
       );
     }
     if (error.response.status === 401) {
       return new BankAuthenticationException(
-        `Bridge authentication failed: ${error.response.status} ${error.response.statusText}`,
+        `Authentication failed: ${error.response.status} ${error.response.statusText}`,
       );
     }
     return new Error(
-      `Bridge request failed with status ${error.response.status}: ${error.message}`,
+      `Bank request failed with status ${error.response.status}: ${error.message}`,
     );
   }
 
   return error instanceof Error
     ? error
-    : new Error('Unknown error while calling Bridge');
+    : new Error('Unknown error while calling the bank service');
 }
 
 function mapAccount(account: BridgeAccount): Account {

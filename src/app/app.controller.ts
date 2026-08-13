@@ -28,7 +28,7 @@ export class AppController {
   })
   @ApiResponse({
     status: 503,
-    description: 'The Bridge mock server is unreachable',
+    description: 'The bank service is unreachable',
     type: ErrorResponseDto,
   })
   @ApiResponse({

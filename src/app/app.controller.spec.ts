@@ -35,7 +35,7 @@ describe('AppController (integration)', () => {
 
     app = moduleFixture.createNestApplication();
     const swaggerConfig = new DocumentBuilder()
-      .setTitle('Bridge Backend Connectors')
+      .setTitle('Backend Connectors')
       .build();
     SwaggerModule.setup(
       'api/docs',
@@ -142,7 +142,7 @@ describe('AppController (integration)', () => {
 
     it('maps a BankUnavailableException to a structured 503 response', async () => {
       bankPort.login.mockRejectedValue(
-        new BankUnavailableException('Bridge is unreachable'),
+        new BankUnavailableException('Bank service is unreachable'),
       );
 
       const response = await request(app.getHttpServer())
@@ -151,7 +151,7 @@ describe('AppController (integration)', () => {
       const body = response.body as ErrorResponseDto;
 
       expect(body.statusCode).toBe(503);
-      expect(body.message).toBe('Bridge is unreachable');
+      expect(body.message).toBe('Bank service is unreachable');
       expect(body.path).toBe('/aggregated-accounts');
     });
 
