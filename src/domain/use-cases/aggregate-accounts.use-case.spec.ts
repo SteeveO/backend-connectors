@@ -118,4 +118,33 @@ describe('AggregateAccountsUseCase', () => {
     expect(bankPort.getAccounts).not.toHaveBeenCalled();
     expect(bankPort.getTransactions).not.toHaveBeenCalled();
   });
+
+  it('isolates a failing account instead of rejecting the whole aggregation', async () => {
+    const bankPort = createBankPortMock();
+    bankPort.login.mockResolvedValue(ACCESS_TOKEN);
+    bankPort.getAccounts.mockResolvedValue([
+      { accNumber: '001', amount: 100, currency: 'EUR' },
+      { accNumber: 'broken', amount: 50, currency: 'EUR' },
+    ]);
+    bankPort.getTransactions.mockImplementation((_token, accNumber) =>
+      accNumber === 'broken'
+        ? Promise.reject(new Error('Account not found'))
+        : Promise.resolve([
+            { id: 't1', label: 'Coffee', amount: -3, currency: 'EUR' },
+          ]),
+    );
+
+    const result = await new AggregateAccountsUseCase(bankPort).execute();
+
+    expect(result).toEqual([
+      {
+        accNumber: '001',
+        amount: 100,
+        transactions: [
+          { id: 't1', label: 'Coffee', amount: -3, currency: 'EUR' },
+        ],
+      },
+      { accNumber: 'broken', amount: 50, transactions: [] },
+    ]);
+  });
 });
