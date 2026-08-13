@@ -4,8 +4,11 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { Account, Transaction } from '../domain/entities';
+import { BankAuthenticationException } from '../domain/exceptions/bank-authentication.exception';
+import { BankUnavailableException } from '../domain/exceptions/bank-unavailable.exception';
 import { BANK_PORT, BankPort } from '../domain/ports/bank.port';
 import { AggregatedAccountDto } from './dto/aggregated-account.dto';
+import { ErrorResponseDto } from './dto/error-response.dto';
 import { AppModule } from './app.module';
 
 function createFakeBankPort(): jest.Mocked<BankPort> {
@@ -118,5 +121,51 @@ describe('AppController (integration)', () => {
       .expect(200);
 
     expect(response.text).toContain('swagger');
+  });
+
+  describe('error handling', () => {
+    it('maps a BankAuthenticationException to a structured 401 response', async () => {
+      bankPort.login.mockRejectedValue(
+        new BankAuthenticationException('Invalid credentials'),
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/aggregated-accounts')
+        .expect(401);
+      const body = response.body as ErrorResponseDto;
+
+      expect(body.statusCode).toBe(401);
+      expect(body.message).toBe('Invalid credentials');
+      expect(body.path).toBe('/aggregated-accounts');
+      expect(typeof body.timestamp).toBe('string');
+    });
+
+    it('maps a BankUnavailableException to a structured 503 response', async () => {
+      bankPort.login.mockRejectedValue(
+        new BankUnavailableException('Bridge is unreachable'),
+      );
+
+      const response = await request(app.getHttpServer())
+        .get('/aggregated-accounts')
+        .expect(503);
+      const body = response.body as ErrorResponseDto;
+
+      expect(body.statusCode).toBe(503);
+      expect(body.message).toBe('Bridge is unreachable');
+      expect(body.path).toBe('/aggregated-accounts');
+    });
+
+    it('maps an unexpected error to a structured, non-leaking 500 response', async () => {
+      bankPort.login.mockRejectedValue(new Error('some internal detail'));
+
+      const response = await request(app.getHttpServer())
+        .get('/aggregated-accounts')
+        .expect(500);
+      const body = response.body as ErrorResponseDto;
+
+      expect(body.statusCode).toBe(500);
+      expect(body.message).toBe('Internal server error');
+      expect(body.path).toBe('/aggregated-accounts');
+    });
   });
 });
