@@ -1,0 +1,27 @@
+services:
+  mock-server:
+    build:
+      context: ./server
+    ports:
+      - '3000:3000'
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:3000/']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  app:
+    build:
+      context: .
+    ports:
+      - '3001:3001'
+    env_file:
+      - .env
+    environment:
+      # Overrides the host-facing BANK_URL from .env: inside the compose network,
+      # the mock server is reached by its service name, not localhost.
+      BANK_URL: http://mock-server:3000
+    depends_on:
+      mock-server:
+        condition: service_healthy

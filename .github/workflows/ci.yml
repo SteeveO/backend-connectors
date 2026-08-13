@@ -27,3 +27,34 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env from example
+        run: cp .env.example .env
+
+      - name: Build and start containers
+        run: docker compose up --build -d
+
+      - name: Wait for the app to respond
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3001/aggregated-accounts > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "App did not become ready in time"
+          docker compose logs
+          exit 1
+
+      - name: Check Swagger docs are served
+        run: curl -sf http://localhost:3001/api/docs > /dev/null
+
+      - name: Tear down
+        if: always()
+        run: docker compose down

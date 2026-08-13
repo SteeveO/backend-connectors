@@ -6,10 +6,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const config = new DocumentBuilder()
-    .setTitle('Bridge Backend Connectors')
-    .setDescription(
-      "Aggregates a user's bank accounts and transactions from the Bridge mock server",
-    )
+    .setTitle('Backend Connectors')
+    .setDescription("Aggregates a user's bank accounts and transactions")
     .setVersion('1.0')
     .build();
   const document = SwaggerModule.createDocument(app, config);
