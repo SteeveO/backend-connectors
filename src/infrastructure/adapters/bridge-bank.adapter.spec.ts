@@ -1,7 +1,9 @@
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { AxiosResponse } from 'axios';
+import { AxiosError, AxiosResponse } from 'axios';
 import { of, throwError } from 'rxjs';
+import { BankAuthenticationException } from '../../domain/exceptions/bank-authentication.exception';
+import { BankUnavailableException } from '../../domain/exceptions/bank-unavailable.exception';
 import { BridgeBankAdapter } from './bridge-bank.adapter';
 
 const ENV = {
@@ -14,6 +16,21 @@ const ENV = {
 
 function fakeResponse<T>(data: T): AxiosResponse<T> {
   return { data } as unknown as AxiosResponse<T>;
+}
+
+function fakeAxiosError(status: number, statusText: string): AxiosError {
+  const response = { status, statusText } as unknown as AxiosResponse;
+  return new AxiosError(
+    `Request failed with status code ${status}`,
+    'ERR_BAD_REQUEST',
+    undefined,
+    undefined,
+    response,
+  );
+}
+
+function fakeNetworkError(): AxiosError {
+  return new AxiosError('connect ECONNREFUSED 127.0.0.1:3000', 'ECONNREFUSED');
 }
 
 function createHttpServiceMock(): jest.Mocked<
@@ -69,14 +86,25 @@ describe('BridgeBankAdapter', () => {
       );
     });
 
-    it('propagates the error when the mock server rejects the credentials', async () => {
+    it('converts a 401 from the mock server into a BankAuthenticationException', async () => {
       const httpService = createHttpServiceMock();
       httpService.post.mockReturnValueOnce(
-        throwError(() => new Error('Request failed with status code 401')),
+        throwError(() => fakeAxiosError(401, 'Unauthorized')),
       );
 
       await expect(createAdapter(httpService).login()).rejects.toThrow(
-        'Request failed with status code 401',
+        BankAuthenticationException,
+      );
+    });
+
+    it('converts a network failure into a BankUnavailableException', async () => {
+      const httpService = createHttpServiceMock();
+      httpService.post.mockReturnValueOnce(
+        throwError(() => fakeNetworkError()),
+      );
+
+      await expect(createAdapter(httpService).login()).rejects.toThrow(
+        BankUnavailableException,
       );
     });
   });
@@ -154,6 +182,15 @@ describe('BridgeBankAdapter', () => {
       const accounts = await createAdapter(httpService).getAccounts('token-1');
 
       expect(accounts).toEqual([]);
+    });
+
+    it('converts a network failure into a BankUnavailableException', async () => {
+      const httpService = createHttpServiceMock();
+      httpService.get.mockReturnValueOnce(throwError(() => fakeNetworkError()));
+
+      await expect(
+        createAdapter(httpService).getAccounts('token-1'),
+      ).rejects.toThrow(BankUnavailableException);
     });
   });
 
@@ -307,6 +344,17 @@ describe('BridgeBankAdapter', () => {
       );
 
       expect(transactions).toEqual([]);
+    });
+
+    it('converts an expired-token 401 into a BankAuthenticationException', async () => {
+      const httpService = createHttpServiceMock();
+      httpService.get.mockReturnValueOnce(
+        throwError(() => fakeAxiosError(401, 'Unauthorized')),
+      );
+
+      await expect(
+        createAdapter(httpService).getTransactions('token-1', '001'),
+      ).rejects.toThrow(BankAuthenticationException);
     });
   });
 });

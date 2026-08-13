@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { AxiosResponse } from 'axios';
+import { AxiosResponse, isAxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
 import { Account, Transaction } from '../../domain/entities';
+import { BankAuthenticationException } from '../../domain/exceptions/bank-authentication.exception';
+import { BankUnavailableException } from '../../domain/exceptions/bank-unavailable.exception';
 import { BankPort } from '../../domain/ports/bank.port';
 import {
   BridgeAccount,
@@ -34,71 +36,105 @@ export class BridgeBankAdapter implements BankPort {
   }
 
   async login(): Promise<string> {
-    const basicAuth = Buffer.from(
-      `${this.clientId}:${this.clientSecret}`,
-    ).toString('base64');
-    const { data: loginData } = await firstValueFrom(
-      this.httpService.post<BridgeLoginResponse>(
-        `${this.baseUrl}/login`,
-        { user: this.username, password: this.password },
-        { headers: { Authorization: `Basic ${basicAuth}` } },
-      ),
-    );
+    try {
+      const basicAuth = Buffer.from(
+        `${this.clientId}:${this.clientSecret}`,
+      ).toString('base64');
+      const { data: loginData } = await firstValueFrom(
+        this.httpService.post<BridgeLoginResponse>(
+          `${this.baseUrl}/login`,
+          { user: this.username, password: this.password },
+          { headers: { Authorization: `Basic ${basicAuth}` } },
+        ),
+      );
 
-    const { data: tokenData } = await firstValueFrom(
-      this.httpService.post<BridgeTokenResponse>(`${this.baseUrl}/token`, {
-        grant_type: 'refresh_token',
-        refresh_token: loginData.refresh_token,
-      }),
-    );
+      const { data: tokenData } = await firstValueFrom(
+        this.httpService.post<BridgeTokenResponse>(`${this.baseUrl}/token`, {
+          grant_type: 'refresh_token',
+          refresh_token: loginData.refresh_token,
+        }),
+      );
 
-    return tokenData.access_token;
+      return tokenData.access_token;
+    } catch (error) {
+      throw toDomainError(error);
+    }
   }
 
   async getAccounts(accessToken: string): Promise<Account[]> {
-    const accounts: Account[] = [];
-    let path: string | null = '/accounts';
+    try {
+      const accounts: Account[] = [];
+      let path: string | null = '/accounts';
 
-    while (path) {
-      const response: AxiosResponse<BridgeAccountsResponse> =
-        await firstValueFrom(
-          this.httpService.get<BridgeAccountsResponse>(
-            `${this.baseUrl}${path}`,
-            {
-              headers: { Authorization: `Bearer ${accessToken}` },
-            },
-          ),
-        );
-      accounts.push(...response.data.account.map(mapAccount));
-      path = response.data.link.next;
+      while (path) {
+        const response: AxiosResponse<BridgeAccountsResponse> =
+          await firstValueFrom(
+            this.httpService.get<BridgeAccountsResponse>(
+              `${this.baseUrl}${path}`,
+              {
+                headers: { Authorization: `Bearer ${accessToken}` },
+              },
+            ),
+          );
+        accounts.push(...response.data.account.map(mapAccount));
+        path = response.data.link.next;
+      }
+
+      return accounts;
+    } catch (error) {
+      throw toDomainError(error);
     }
-
-    return accounts;
   }
 
   async getTransactions(
     accessToken: string,
     accNumber: string,
   ): Promise<Transaction[]> {
-    const transactions: Transaction[] = [];
-    let path: string | null = `/accounts/${accNumber}/transactions`;
+    try {
+      const transactions: Transaction[] = [];
+      let path: string | null = `/accounts/${accNumber}/transactions`;
 
-    while (path) {
-      const response: AxiosResponse<BridgeTransactionsResponse> =
-        await firstValueFrom(
-          this.httpService.get<BridgeTransactionsResponse>(
-            `${this.baseUrl}${path}`,
-            {
-              headers: { Authorization: `Bearer ${accessToken}` },
-            },
-          ),
-        );
-      transactions.push(...response.data.transactions.map(mapTransaction));
-      path = response.data.link.next;
+      while (path) {
+        const response: AxiosResponse<BridgeTransactionsResponse> =
+          await firstValueFrom(
+            this.httpService.get<BridgeTransactionsResponse>(
+              `${this.baseUrl}${path}`,
+              {
+                headers: { Authorization: `Bearer ${accessToken}` },
+              },
+            ),
+          );
+        transactions.push(...response.data.transactions.map(mapTransaction));
+        path = response.data.link.next;
+      }
+
+      return dedupeById(transactions);
+    } catch (error) {
+      throw toDomainError(error);
     }
-
-    return dedupeById(transactions);
   }
+}
+
+function toDomainError(error: unknown): Error {
+  if (isAxiosError(error)) {
+    if (!error.response) {
+      return new BankUnavailableException(
+        `Bridge mock server is unreachable: ${error.message}`,
+      );
+    }
+    if (error.response.status === 401) {
+      return new BankAuthenticationException(
+        `Bridge authentication failed: ${error.response.status} ${error.response.statusText}`,
+      );
+    }
+    return new Error(
+      `Bridge request failed with status ${error.response.status}: ${error.message}`,
+    );
+  }
+
+  return error instanceof Error
+    ? error
+    : new Error('Unknown error while calling Bridge');
 }
 
 function mapAccount(account: BridgeAccount): Account {
