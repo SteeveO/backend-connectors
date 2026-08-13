@@ -1,0 +1,14 @@
+{
+  "name": "bridge-mock-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bridge technical test mock server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "body-parser": "^2.3.0",
+    "express": "^5.2.1"
+  }
+}
