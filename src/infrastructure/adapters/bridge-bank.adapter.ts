@@ -5,45 +5,14 @@ import { AxiosResponse } from 'axios';
 import { firstValueFrom } from 'rxjs';
 import { Account, Transaction } from '../../domain/entities';
 import { BankPort } from '../../domain/ports/bank.port';
-
-interface BridgeLoginResponse {
-  refresh_token: string;
-}
-
-interface BridgeTokenResponse {
-  access_token: string;
-}
-
-interface BridgeLink {
-  self: string;
-  next: string | null;
-}
-
-interface BridgeAccount {
-  acc_number: string;
-  amount: string;
-  currency: string;
-}
-
-interface BridgeAccountsResponse {
-  account: BridgeAccount[];
-  link: BridgeLink;
-}
-
-type BridgeTransactionSign = 'DBT' | 'CDT';
-
-interface BridgeTransaction {
-  id: number;
-  label: string;
-  sign: BridgeTransactionSign;
-  amount: string;
-  currency: string;
-}
-
-interface BridgeTransactionsResponse {
-  transactions: BridgeTransaction[];
-  link: BridgeLink;
-}
+import {
+  BridgeAccount,
+  BridgeAccountsResponse,
+  BridgeLoginResponse,
+  BridgeTokenResponse,
+  BridgeTransaction,
+  BridgeTransactionsResponse,
+} from './bridge-bank.types';
 
 @Injectable()
 export class BridgeBankAdapter implements BankPort {
