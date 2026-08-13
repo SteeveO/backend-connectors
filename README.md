@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/SteeveO/backend-connectors/actions/workflows/ci.yml/badge.svg)](https://github.com/SteeveO/backend-connectors/actions/workflows/ci.yml)
 
-Connecteur bancaire qui s'authentifie auprès d'une API bancaire (mockée en local), agrège les comptes et transactions d'un utilisateur (avec pagination et déduplication), et expose le résultat via un unique endpoint REST documenté sur Swagger.
+A bank connector that authenticates against a bank API (mocked locally), aggregates a user's accounts and transactions (with pagination and deduplication), and exposes the result through a single REST endpoint documented on Swagger.
 
-## Démarrage rapide
+## Quick start
 
-Trois commandes :
+Three commands:
 
 ```bash
 git clone git@github.com:SteeveO/backend-connectors.git && cd backend-connectors
@@ -16,58 +16,58 @@ docker-compose up
 
 | Service | URL |
 | --- | --- |
-| API (endpoint agrégé) | http://localhost:3001/aggregated-accounts |
-| Documentation Swagger | http://localhost:3001/api/docs |
-| Mock server bancaire | http://localhost:3000 |
+| API (aggregated endpoint) | http://localhost:3001/aggregated-accounts |
+| Swagger documentation | http://localhost:3001/api/docs |
+| Mock bank server | http://localhost:3000 |
 
-## Pistes d'amélioration
+## Possible improvements
 
-- **Authentification par requête** : `login()` refait le cycle `POST /login` → `POST /token` à chaque appel de `AggregateAccountsUseCase.execute()`. Un cache d'access token avec gestion d'expiration (et refresh transparent) éviterait cet aller-retour systématique.
-- **Observabilité** : l'isolation d'erreur par compte (voir plus bas) journalise sur `console.error` faute de logger structuré ; un vrai logger (avec niveau, corrélation par requête) serait injecté via un port dédié plutôt que d'utiliser une dépendance globale dans le domaine.
-- **Rate limiting / retry** : aucun retry ni backoff sur les appels sortants ; en production, une panne transitoire du fournisseur ferait actuellement échouer ou vider une requête entière au lieu de réessayer.
-- **Tests de charge sur la pagination** : le mock expose des comptes/transactions sur un nombre de pages volontairement élevé (voir plus bas) ; le comportement de l'adaptateur sur un vrai volume de production (des milliers de comptes) n'est validé que par lecture de code, pas par un test de charge.
+- **Per-request authentication**: `login()` redoes the `POST /login` → `POST /token` cycle on every call to `AggregateAccountsUseCase.execute()`. An access token cache with expiry tracking (and transparent refresh) would avoid this systematic round trip.
+- **Observability**: per-account error isolation (see below) logs to `console.error` for lack of a structured logger; a real logger (with levels, per-request correlation) would be injected through a dedicated port instead of using a global dependency in the domain.
+- **Rate limiting / retry**: no retry or backoff on outbound calls; in production, a transient outage on the provider's side would currently fail or empty out an entire request instead of being retried.
+- **Load testing the pagination path**: the mock exposes accounts/transactions over a deliberately large number of pages (see below); the adapter's behavior at real production volume (thousands of accounts) is only validated by reading the code, not by a load test.
 
 ## Architecture
 
-Le projet suit une architecture hexagonale (ports & adapters) :
+The project follows a hexagonal architecture (ports & adapters):
 
 ```
 src/
 ├── domain/
-│   ├── entities/       # Types métier purs : Account, Transaction, AggregatedAccount
-│   ├── ports/           # BankPort : l'interface dont le domaine a besoin
-│   ├── use-cases/       # AggregateAccountsUseCase : orchestration, aucune I/O directe
+│   ├── entities/       # Pure business types: Account, Transaction, AggregatedAccount
+│   ├── ports/           # BankPort: the interface the domain needs
+│   ├── use-cases/       # AggregateAccountsUseCase: orchestration, no direct I/O
 │   └── exceptions/      # BankAuthenticationException, BankUnavailableException
 ├── infrastructure/
-│   └── adapters/        # Implémente BankPort via HTTP
+│   └── adapters/        # Implements BankPort over HTTP
 └── app/
     ├── app.controller.ts   # GET /aggregated-accounts
-    ├── app.module.ts       # Câblage DI de l'adaptateur -> BankPort
-    ├── dto/                 # DTOs Swagger
-    └── filters/             # AllExceptionsFilter : erreurs -> réponses structurées
+    ├── app.module.ts       # DI wiring of the adapter -> BankPort
+    ├── dto/                 # Swagger DTOs
+    └── filters/             # AllExceptionsFilter: errors -> structured responses
 ```
 
-Le domaine ne sait pas qu'il parle à un serveur HTTP : il dépend uniquement de l'interface `BankPort`. L'adaptateur HTTP (`src/infrastructure/adapters/`) est la seule couche qui connaît les détails de l'API bancaire (URLs, pagination, format des réponses) ; ses types internes ne sont jamais exposés au-delà de ce fichier. `AppModule` est le seul endroit où domaine et infrastructure se rencontrent, via l'injection de dépendances NestJS (`BankPort` est un token `Symbol` puisque les interfaces TypeScript n'existent plus au runtime).
+The domain doesn't know it's talking to an HTTP server: it only depends on the `BankPort` interface. The HTTP adapter (`src/infrastructure/adapters/`) is the only layer that knows the bank API's details (URLs, pagination, response format); its internal types never leak past that file. `AppModule` is the only place domain and infrastructure meet, through NestJS dependency injection (`BankPort` is a `Symbol` token, since TypeScript interfaces no longer exist at runtime).
 
-### Pourquoi une architecture hexagonale ici
+### Why a hexagonal architecture here
 
-Le besoin fonctionnel de base (agréger comptes et transactions depuis une API bancaire) tiendrait dans un simple script. Une archi hexagonale est volontairement disproportionnée pour ce seul besoin, mais elle sert ici à démontrer une séparation stricte domaine/infrastructure : le use case et les entités se testent sans aucun appel HTTP (mocks du port), l'adaptateur se teste sans dépendre d'un serveur réel (axios mocké), et le seul test qui parle réellement HTTP est le test d'intégration du controller — qui simule lui aussi l'API bancaire plutôt que de l'appeler (voir plus bas).
+The core functional need (aggregating accounts and transactions from a bank API) would fit in a simple script. A hexagonal architecture is deliberately overkill for that need alone, but it demonstrates a strict domain/infrastructure separation here: the use case and entities are tested without any HTTP call (port mocks), the adapter is tested without depending on a real server (mocked axios), and the only test that actually speaks HTTP is the controller's integration test — which also simulates the bank API rather than calling it (see below).
 
 ### Pagination
 
-Les endpoints de liste (comptes, transactions) sont paginés via `link.next` (une URL relative, ou `null` en fin de pagination). L'adaptateur boucle tant que `link.next` n'est pas `null`, sans jamais supposer qu'une seule page suffit. Le mock server fourni pousse volontairement cette pagination loin (jusqu'à 22 pages de comptes), ce qui a permis de vérifier ce comportement en conditions réelles plutôt que seulement sur des mocks.
+List endpoints (accounts, transactions) are paginated via `link.next` (a relative URL, or `null` at the end of pagination). The adapter loops while `link.next` isn't `null`, never assuming a single page is enough. The provided mock deliberately pushes this pagination far (up to 22 account pages), which made it possible to verify this behavior under real conditions rather than only against mocks.
 
-### Déduplication
+### Deduplication
 
-Le mock server répète parfois les mêmes transactions d'une page à l'autre (constaté en pratique sur les données fournies). L'adaptateur déduplique les transactions par `id` (via une `Map`, qui conserve l'ordre d'insertion) avant de retourner le résultat au domaine — la déduplication est un détail d'infrastructure, le domaine reçoit toujours une liste propre.
+The mock server sometimes repeats the same transactions across pages (observed in practice on the provided data). The adapter deduplicates transactions by `id` (via a `Map`, which preserves insertion order) before returning the result to the domain — deduplication is an infrastructure detail; the domain always receives a clean list.
 
-### Isolation d'erreur par compte
+### Per-account error isolation
 
-`AggregateAccountsUseCase.execute()` récupère les transactions de tous les comptes en parallèle via `Promise.allSettled` (et non `Promise.all`) : si un compte échoue (données incohérentes côté fournisseur, erreur réseau ponctuelle...), il est retourné avec une liste de transactions vide plutôt que de faire échouer toute l'agrégation. Ce choix a été validé en pratique : les données du mock (`server/myInfos.json`) contiennent une incohérence (un compte listé sous un numéro dans `/accounts` mais indexé différemment dans les transactions), ce qui fait systématiquement échouer l'appel transactions de ce compte précis.
+`AggregateAccountsUseCase.execute()` fetches every account's transactions in parallel via `Promise.allSettled` (not `Promise.all`): if one account fails (inconsistent data on the provider's side, a transient network error...), it's returned with an empty transaction list instead of failing the whole aggregation. This choice was validated in practice: the mock data (`server/myInfos.json`) contains an inconsistency (an account listed under one number in `/accounts` but indexed differently in transactions), which makes that specific account's transactions call fail every time.
 
-### Gestion d'erreur
+### Error handling
 
-L'adaptateur convertit toute erreur axios en exception domaine avant qu'elle ne le quitte : un 401 devient `BankAuthenticationException`, une erreur réseau (mock injoignable) devient `BankUnavailableException`, toute autre erreur devient une `Error` avec un message nettoyé — jamais une erreur axios brute ne remonte au domaine. `AllExceptionsFilter`, enregistré globalement via le provider `APP_FILTER`, transforme ces exceptions en réponses JSON structurées :
+The adapter converts every axios error into a domain exception before it leaves the adapter: a 401 becomes `BankAuthenticationException`, a network error (mock unreachable) becomes `BankUnavailableException`, anything else becomes an `Error` with a clean message — no raw axios error ever reaches the domain. `AllExceptionsFilter`, registered globally through the `APP_FILTER` provider, turns these exceptions into structured JSON responses:
 
 ```json
 {
@@ -80,49 +80,49 @@ L'adaptateur convertit toute erreur axios en exception domaine avant qu'elle ne 
 
 | Cause | Code |
 | --- | --- |
-| `BankAuthenticationException` (identifiants invalides) | 401 |
-| `BankUnavailableException` (mock server injoignable) | 503 |
-| Toute autre erreur non gérée | 500 |
+| `BankAuthenticationException` (invalid credentials) | 401 |
+| `BankUnavailableException` (mock server unreachable) | 503 |
+| Any other unhandled error | 500 |
 
-## Stratégie de test
+## Test strategy
 
-- **Domaine** (`aggregate-accounts.use-case.spec.ts`) : `BankPort` mocké, aucun appel HTTP.
-- **Adaptateur** (`*.adapter.spec.ts`) : `HttpService` mocké, aucun appel au mock server réel.
-- **Controller / DI** (`app.controller.spec.ts`) : le pipeline complet HTTP → controller → use case → DTO est exercé via `supertest` sur une vraie instance Nest, mais `BankPort` y est remplacé par une implémentation simulée (`overrideProvider`). L'API bancaire est traitée comme on traiterait une vraie API tierce en production : simulée par la suite de tests, jamais appelée par elle.
+- **Domain** (`aggregate-accounts.use-case.spec.ts`): `BankPort` mocked, no HTTP call.
+- **Adapter** (`*.adapter.spec.ts`): `HttpService` mocked, no call to a real mock server.
+- **Controller / DI** (`app.controller.spec.ts`): the full HTTP → controller → use case → DTO pipeline is exercised via `supertest` against a real Nest instance, but `BankPort` is replaced there with a fake implementation (`overrideProvider`). The bank API is treated the way a real third-party API would be treated in production: simulated by the test suite, never called by it.
 
-Le comportement contre le *vrai* mock server (pagination réelle sur ~22 pages, incohérence de données, dédup de transactions dupliquées, codes 401/503 réels) a été vérifié manuellement pendant le développement plutôt qu'automatisé dans la CI, pour garder la suite de tests rapide et déterministe.
+Behavior against the *real* mock server (actual pagination across ~22 pages, the data inconsistency, deduplication of repeated transactions, real 401/503 codes) was verified manually during development rather than automated in CI, to keep the test suite fast and deterministic.
 
-## Variables d'environnement
+## Environment variables
 
-Voir [`.env.example`](.env.example).
+See [`.env.example`](.env.example).
 
 | Variable | Description |
 | --- | --- |
-| `PORT` | Port d'écoute de l'application (3001 par défaut, différent du mock qui est fixé sur 3000) |
-| `BANK_URL` | URL de l'API bancaire (mock server en local) |
-| `BANK_CLIENT_ID` / `BANK_CLIENT_SECRET` | Identifiants client pour `POST /login` |
-| `BANK_LOGIN` / `BANK_PASSWORD` | Identifiants utilisateur pour `POST /login` |
+| `PORT` | Application listening port (3001 by default, different from the mock which is fixed on 3000) |
+| `BANK_URL` | Bank API URL (mock server locally) |
+| `BANK_CLIENT_ID` / `BANK_CLIENT_SECRET` | Client credentials for `POST /login` |
+| `BANK_LOGIN` / `BANK_PASSWORD` | User credentials for `POST /login` |
 
-En local avec `docker-compose`, `BANK_URL` est automatiquement réécrit vers `http://mock-server:3000` (le nom du service dans le réseau Docker) ; la valeur de `.env` sert pour un lancement hors containers.
+With `docker-compose`, `BANK_URL` is automatically overridden to `http://mock-server:3000` (the service name on the Docker network); the value from `.env` is for running outside containers.
 
-## Commandes disponibles
+## Available commands
 
 ```bash
-npm run start:dev      # Démarre l'application en mode watch
-npm run start-server    # Démarre le mock server bancaire (hors Docker)
-npm run test             # Tests unitaires + d'intégration
-npm run test:cov        # Tests avec couverture
-npm run lint              # ESLint (avec --fix)
-npm run typecheck       # Vérification TypeScript sans émission
-npm run build             # Build de production
+npm run start:dev      # Start the application in watch mode
+npm run start-server    # Start the mock bank server (outside Docker)
+npm run test             # Unit + integration tests
+npm run test:cov        # Tests with coverage
+npm run lint              # ESLint (with --fix)
+npm run typecheck       # TypeScript check without emitting
+npm run build             # Production build
 ```
 
-## Stack technique
+## Tech stack
 
 NestJS · TypeScript · Jest · Swagger (`@nestjs/swagger`) · Docker / Docker Compose · `@nestjs/config`
 
 ## Conventions
 
-- Code, commentaires et commits en anglais ([Conventional Commits](https://www.conventionalcommits.org/))
-- Séparation stricte domaine / infrastructure : aucune dépendance HTTP dans `src/domain`
-- Aucun secret commité, tout passe par `.env`
+- Code, comments and commits in English ([Conventional Commits](https://www.conventionalcommits.org/))
+- Strict domain / infrastructure separation: no HTTP dependency in `src/domain`
+- No secret committed, everything goes through `.env`
