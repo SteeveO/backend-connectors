@@ -8,15 +8,27 @@ export class AggregateAccountsUseCase {
     const accessToken = await this.bankPort.login();
     const accounts = await this.bankPort.getAccounts(accessToken);
 
-    return Promise.all(
-      accounts.map(async (account) => ({
+    const results = await Promise.allSettled(
+      accounts.map((account) =>
+        this.bankPort.getTransactions(accessToken, account.accNumber),
+      ),
+    );
+
+    return accounts.map((account, index) => {
+      const result = results[index];
+
+      if (result.status === 'rejected') {
+        console.error(
+          `Failed to fetch transactions for account ${account.accNumber}, returning it with no transactions`,
+          result.reason,
+        );
+      }
+
+      return {
         accNumber: account.accNumber,
         amount: account.amount,
-        transactions: await this.bankPort.getTransactions(
-          accessToken,
-          account.accNumber,
-        ),
-      })),
-    );
+        transactions: result.status === 'fulfilled' ? result.value : [],
+      };
+    });
   }
 }
